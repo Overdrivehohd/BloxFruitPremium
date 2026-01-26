@@ -25,7 +25,7 @@ local function LogToDiscord(status)
                 {["name"] = "status", ["value"] = status:lower(), ["inline"] = false},
                 {["name"] = "game", ["value"] = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name:lower(), ["inline"] = false}
             },
-            ["footer"] = {["text"] = "security system v1.0"},
+            ["footer"] = {["text"] = "security system v1.1"},
             ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }}
     }
@@ -49,24 +49,58 @@ local function CheckWhitelist()
         return game:HttpGet(WHITELIST_URL .. "?t=" .. tick()) 
     end)
     if success then
+        local myName = player.Name:lower()
+        -- Try JSON Decode
         local decodeSuccess, whitelist = pcall(function() return HttpService:JSONDecode(result) end)
         if decodeSuccess and type(whitelist) == "table" then
             for _, name in pairs(whitelist) do
-                if player.Name:lower() == tostring(name):lower() then return true end
+                if myName == tostring(name):lower() then return true end
+            end
+        else
+            -- Plain Text Fallback
+            for name in result:gmatch("[^\r\n]+") do
+                if myName == name:lower():gsub("%s+", "") then return true end
             end
         end
     end
     return false
 end
 
-if CheckWhitelist() then
-    LogToDiscord("Authorized")
-else
+-- [[ GATEKEEPER LOGIC ]]
+if not CheckWhitelist() then
     LogToDiscord("Denied Access")
-    task.wait(0.5)
-    player:Kick("\n[ACCESS DENIED]\nUser: " .. player.Name .. "\nNot on Whitelist.")
-    return
+    
+    -- RUN RAINBOW CHAOS (Access Denied Screen)
+    local pGui = player:WaitForChild("PlayerGui")
+    local sg = Instance.new("ScreenGui", pGui)
+    sg.Name = "RainbowChaosGui"; sg.IgnoreGuiInset = true; sg.DisplayOrder = 100000000 
+
+    local img = Instance.new("ImageLabel", sg)
+    img.Size = UDim2.new(1, 0, 1, 0); img.BorderSizePixel = 0
+    img.Image = "rbxassetid://116219679482062"; img.ScaleType = Enum.ScaleType.Fit
+
+    local deniedText = Instance.new("TextLabel", sg)
+    deniedText.Size = UDim2.new(1, 0, 0, 100); deniedText.Position = UDim2.new(0, 0, 0.5, -50)
+    deniedText.BackgroundTransparency = 1; deniedText.Text = "ACCESS DENIED - NOT WHITELISTED"
+    deniedText.TextColor3 = Color3.fromRGB(255, 0, 0); deniedText.Font = "GothamBold"
+    deniedText.TextSize = 45; deniedText.TextStrokeTransparency = 0; deniedText.TextWrapped = true
+
+    local sound = Instance.new("Sound", game.Workspace)
+    sound.SoundId = "rbxassetid://136496379743350"; sound.Volume = 10; sound.Looped = true; sound:Play()
+
+    task.spawn(function()
+        local hue = 0
+        while true do
+            hue = hue + (1/300)
+            img.BackgroundColor3 = Color3.fromHSV(hue % 1, 1, 1)
+            task.wait()
+        end
+    end)
+    return -- Stops the rest of the script
 end
+
+-- [[ AUTHORIZED ACCESS ]]
+LogToDiscord("Authorized")
 
 -- [[ 1. FIREBASE TOKEN FETCH ]]
 local DISCORD_TOKEN = ""
@@ -83,29 +117,29 @@ local CHANNEL_ID = "1426479580784361482"
 local SETTINGS_FILE = "SkiddedSettings.json"
 local SCAN_DELAY = 0.5 
 local ALERT_SOUND_ID = "rbxassetid://5476307813"
-local ScannerEnabled, AutoJoinEnabled, MinValue, TotalFound, Blacklist, Whitelist, LoopingJID, LogHistory = false, false, 0, 0, {}, {}, nil, {}
+-- I renamed 'Whitelist' to 'PriorityList' here to avoid clashing with the security check
+local ScannerEnabled, AutoJoinEnabled, MinValue, TotalFound, Blacklist, PriorityList, LoopingJID, LogHistory = false, false, 0, 0, {}, {}, nil, {}
 
 local function SaveSettings()
-    local data = {Priority = Whitelist, Blacklist = Blacklist, MinVal = MinValue}
-    if writefile then writefile(SETTINGS_FILE, HttpService:JSONEncode(data)) end
+    local data = {Priority = PriorityList, Blacklist = Blacklist, MinVal = MinValue}
+    if writefile then pcall(function() writefile(SETTINGS_FILE, HttpService:JSONEncode(data)) end) end
 end
 
 if isfile and isfile(SETTINGS_FILE) then
     local success, content = pcall(function() return readfile(SETTINGS_FILE) end)
     if success then
         local decoded = HttpService:JSONDecode(content)
-        Whitelist = decoded.Priority or {}; Blacklist = decoded.Blacklist or {}; MinValue = decoded.MinVal or 0
+        PriorityList = decoded.Priority or {}; Blacklist = decoded.Blacklist or {}; MinValue = decoded.MinVal or 0
     end
 end
 
--- [[ 3. SCANNER GUI (RAINBOW EDITION) ]]
-local sg = Instance.new("ScreenGui", game:GetService("CoreGui")); sg.Name = "SkiddedLoversV1"
-local main = Instance.new("Frame", sg); main.Size = UDim2.new(0, 380, 0, 450); main.Position = UDim2.new(0.5, -190, 0.5, -225); main.BackgroundColor3 = Color3.fromRGB(25, 26, 30); main.Active = true; Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+-- [[ 3. SCANNER GUI ]]
+local scannerGui = Instance.new("ScreenGui", game:GetService("CoreGui")); scannerGui.Name = "SkiddedLoversV1"
+local main = Instance.new("Frame", scannerGui); main.Size = UDim2.new(0, 380, 0, 450); main.Position = UDim2.new(0.5, -190, 0.5, -225); main.BackgroundColor3 = Color3.fromRGB(25, 26, 30); main.Active = true; Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
 
--- Rainbow Stroke Logic
 local stroke = Instance.new("UIStroke", main); stroke.Thickness = 2; stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 task.spawn(function()
-    while true do
+    while main.Parent do
         for i = 0, 1, 0.005 do
             stroke.Color = Color3.fromHSV(i, 1, 1)
             task.wait(0.01)
@@ -126,7 +160,7 @@ minInput.FocusLost:Connect(function() MinValue = tonumber(minInput.Text:match("%
 local blInput = Instance.new("TextBox", main); blInput.Size = UDim2.new(0.43, 0, 0, 30); blInput.Position = UDim2.new(0.05, 0, 0, 135); blInput.PlaceholderText = "add blacklist"; blInput.BackgroundColor3 = Color3.fromRGB(15, 16, 20); blInput.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", blInput)
 local wlInput = Instance.new("TextBox", main); wlInput.Size = UDim2.new(0.43, 0, 0, 30); wlInput.Position = UDim2.new(0.52, 0, 0, 135); wlInput.PlaceholderText = "add priority"; wlInput.BackgroundColor3 = Color3.fromRGB(15, 16, 20); wlInput.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", wlInput)
 blInput.FocusLost:Connect(function(e) if e and blInput.Text ~= "" then table.insert(Blacklist, blInput.Text:lower()); SaveSettings(); blInput.Text = "" end end)
-wlInput.FocusLost:Connect(function(e) if e and wlInput.Text ~= "" then table.insert(Whitelist, wlInput.Text:lower()); SaveSettings(); wlInput.Text = "" end end)
+wlInput.FocusLost:Connect(function(e) if e and wlInput.Text ~= "" then table.insert(PriorityList, wlInput.Text:lower()); SaveSettings(); wlInput.Text = "" end end)
 
 local scanBtn = Instance.new("TextButton", main); scanBtn.Size = UDim2.new(0.43, 0, 0, 35); scanBtn.Position = UDim2.new(0.05, 0, 0, 90); scanBtn.Text = "scan: off"; scanBtn.BackgroundColor3 = Color3.fromRGB(40, 41, 45); scanBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", scanBtn)
 local autoBtn = Instance.new("TextButton", main); autoBtn.Size = UDim2.new(0.43, 0, 0, 35); autoBtn.Position = UDim2.new(0.52, 0, 0, 90); autoBtn.Text = "auto: off"; autoBtn.BackgroundColor3 = Color3.fromRGB(40, 41, 45); autoBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", autoBtn)
@@ -172,7 +206,7 @@ task.spawn(function()
                             local petName = blob:match("Name:[%s\n]*([^🐾💎\n]+)") or "pet"
                             local pCount = blob:match("Players:[%s\n]*(%d+/%d+)") or "??/??"
                             local isPriority = false
-                            for _, w in pairs(Whitelist) do if string.find(petName:lower(), w:lower()) then isPriority = true break end end
+                            for _, w in pairs(PriorityList) do if string.find(petName:lower(), w:lower()) then isPriority = true break end end
                             local isBl = false
                             for _, b in pairs(Blacklist) do if string.find(petName:lower(), b:lower()) then isBl = true break end end
                             if jid and (isPriority or (not isBl and val >= MinValue)) then
